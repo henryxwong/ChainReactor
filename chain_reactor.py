@@ -51,6 +51,26 @@ class ChainReactor(BaseLlamaPack):
         with open(filepath, "w") as file:
             file.write(content)
 
+    def detect_fence(self, system_prompt: str) -> tuple:
+        fences = {
+            "source": self.wrap_fence("source"),
+            "code": self.wrap_fence("code"),
+            "pre": self.wrap_fence("pre"),
+            "codeblock": self.wrap_fence("codeblock"),
+            "sourcecode": self.wrap_fence("sourcecode"),
+        }
+
+        for fence_name in fences.keys():
+            if f"<{fence_name}>" in system_prompt.lower():
+                return fences[fence_name]
+
+        # Default to triple backticks if no match is found
+        return "``" + "`", "``" + "`"
+
+    @staticmethod
+    def wrap_fence(name):
+        return f"<{name}>", f"</{name}>"
+
     def request_and_response(
             self,
             reactor_llm: LLM,
@@ -133,16 +153,18 @@ class ChainReactor(BaseLlamaPack):
 
         return original_response if "original" in comparison_result.lower() else new_response
 
-    def format_output(self, response: str) -> str:
+    def format_output(self, system_prompt: str, response: str) -> str:
+        # Detect the fence from the system prompt
+        open_fence, close_fence = self.detect_fence(system_prompt)
+
         format_prompt = (
             "You will be given a text block enclosed within '---START---' and '---END---'. "
             "Extract the file path and the code from this block. "
-            "Return them in the following format only:\n\n"
+            f"Return them in the following format only:\n\n"
             "file-path\n"
-            "```lang\n"
+            f"{open_fence}\n"
             "code\n"
-            "```\n\n"
-            "Replace 'lang' with the appropriate programming language of the code. "
+            f"{close_fence}\n\n"
             "Do not include any additional text, explanations, or labels such as 'file-path' or 'code'. "
             "Ensure that the output contains only the file path and the code block in the specified format."
         )
@@ -203,7 +225,7 @@ class ChainReactor(BaseLlamaPack):
                 is_first_pass = False
 
         if self.aider_mode and "Generate a commit message" not in system_prompt:
-            previous_response = self.format_output(previous_response)
+            previous_response = self.format_output(system_prompt, previous_response)
 
         return previous_response
 
