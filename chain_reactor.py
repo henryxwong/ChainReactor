@@ -6,6 +6,7 @@ import json
 import copy
 import datetime
 import logging
+import re
 from typing import List
 from flask import Flask, request, jsonify, Response
 from llama_index.llms.ollama import Ollama
@@ -92,8 +93,16 @@ class ChainReactor(BaseLlamaPack):
                 "Focus solely on the request. For coding tasks, fix any bugs or errors in the code. "
                 "Provide the refined code or solution without adding any explanations or confirmations. "
                 "If no changes are needed, repeat the previous response exactly as it is, with no additional text. "
-                "Avoid any commentary such as 'The code is correct' or 'No changes are needed'."
+                "Avoid any commentary such as 'The code is correct' or 'No changes are needed'. "
+                "Ensure the output does not include '---START PREVIOUS RESPONSE---' and '---END PREVIOUS RESPONSE---'."
             )
+
+            if self.aider_mode:
+                enhanced_system_message += (
+                    " Preserve the search line '<<<<<<< SEARCH', dividing line '=======', "
+                    "and replace line '>>>>>>> REPLACE' if they are present."
+                )
+
             combined_system_prompt = f"{enhanced_system_message}\n\n{system_prompt}"
 
             messages.insert(0, ChatMessage(role="system", content=combined_system_prompt))
@@ -111,10 +120,44 @@ class ChainReactor(BaseLlamaPack):
 
     def compare_responses(
             self,
+            system_prompt: str,
             all_messages: List[ChatMessage],
             original_response: str,
             new_response: str
     ) -> str:
+        if self.aider_mode:
+            # Detect the fence from the system prompt
+            open_fence, close_fence = self.detect_fence(system_prompt)
+
+            # Regular expression to detect individual fenced blocks
+            block_pattern = re.compile(
+                rf"{re.escape(open_fence)}(.*?){re.escape(close_fence)}",
+                re.DOTALL
+            )
+
+            # Regular expression to validate the full search and replace pattern within a block
+            full_pattern = re.compile(
+                r"<<<<<<< SEARCH.*?=======.*?>>>>>>> REPLACE",
+                re.DOTALL
+            )
+
+            def is_fully_correct(response: str) -> bool:
+                blocks = block_pattern.findall(response)
+                # A response is only fully correct if all detected blocks are valid
+                return all(full_pattern.search(block) for block in blocks)
+
+            original_fully_correct = is_fully_correct(original_response)
+            new_fully_correct = is_fully_correct(new_response)
+
+            # Reject responses that have some but not all patterns correct
+            if new_fully_correct and not original_fully_correct:
+                return new_response
+            elif original_fully_correct and not new_fully_correct:
+                return original_response
+            else:
+                # Fall back to comparison LLM if neither response is fully correct
+                pass  # Continue to use the comparison logic below
+
         comparison_prompt = (
             "You will be given a user prompt, an original response, and a new response. "
             "Evaluate the original and new responses based on how well they match the user prompt. "
@@ -153,37 +196,6 @@ class ChainReactor(BaseLlamaPack):
 
         return original_response if "original" in comparison_result.lower() else new_response
 
-    def format_output(self, system_prompt: str, response: str) -> str:
-        # Detect the fence from the system prompt
-        open_fence, close_fence = self.detect_fence(system_prompt)
-
-        format_prompt = (
-            "You will be given a text block enclosed within '---START---' and '---END---'. "
-            "Extract the file path and the code from this block. "
-            f"Return them in the following format only:\n\n"
-            "file-path\n"
-            f"{open_fence}\n"
-            "code\n"
-            f"{close_fence}\n\n"
-            "Do not include any additional text, explanations, or labels such as 'file-path' or 'code'. "
-            "Ensure that the output contains only the file path and the code block in the specified format."
-        )
-
-        user_prompt = f"{format_prompt}\n\n---START---\n{response}\n---END---"
-
-        messages = [
-            ChatMessage(role="user", content=user_prompt),
-        ]
-
-        input_content = "\n".join([f"{msg.role}: {msg.content}" for msg in messages])
-        self.save_to_file(input_content, "controller_format_input.txt")
-
-        formatted_response = str(self.controller_llm.chat(messages, max_tokens=self.max_tokens, temperature=self.temperature)).strip()
-        formatted_response = self.strip_assistant_prefix(formatted_response)
-
-        self.save_to_file(formatted_response, "controller_format_output.txt")
-
-        return formatted_response
 
     def run(self, system_prompt: str, all_messages: List[ChatMessage]) -> str:
         previous_response = ""
@@ -212,6 +224,7 @@ class ChainReactor(BaseLlamaPack):
                 if previous_response:
                     try:
                         previous_response = self.compare_responses(
+                            system_prompt=system_prompt,
                             all_messages=messages,
                             original_response=previous_response,
                             new_response=new_response
@@ -223,9 +236,6 @@ class ChainReactor(BaseLlamaPack):
                     previous_response = new_response
 
                 is_first_pass = False
-
-        if self.aider_mode and "Generate a commit message" not in system_prompt:
-            previous_response = self.format_output(system_prompt, previous_response)
 
         return previous_response
 
@@ -320,7 +330,8 @@ def main():
     global chain_reactor
     chain_reactor = ChainReactor(
         reactor_llms=[
-            Ollama(model="mistral-nemo:12b-instruct-2407-q8_0", request_timeout=300.0),
+            # Ollama(model="llama3.1:8b-instruct-fp16", request_timeout=300.0),
+            # Ollama(model="mistral-nemo:12b-instruct-2407-q8_0", request_timeout=300.0),
             Ollama(model="codestral:22b-v0.1-q8_0", request_timeout=300.0),
         ],
         controller_llm=Ollama(model="phi3:14b-medium-128k-instruct-q8_0", request_timeout=300.0),
