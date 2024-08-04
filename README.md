@@ -84,7 +84,7 @@ export OPENAI_API_KEY=FAKE_KEY
 Finally, start `aider.chat` with the following command:
 
 ```bash
-aider --model openai/chain-reactor
+aider --edit-format diff --model openai/chain-reactor
 ```
 
 In `aider.chat`, the `--aider` mode enables additional output formatting to increase the compatibility of the formatted output.
