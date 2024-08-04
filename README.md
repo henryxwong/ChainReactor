@@ -1,4 +1,14 @@
+
 # ChainReactor
+
+## Table of Contents
+1. [Features](#features)
+2. [Workflow Diagram](#workflow-diagram)
+3. [Installation](#installation)
+4. [Usage](#usage)
+5. [Configuration](#configuration)
+6. [Contributing](#contributing)
+7. [License](#license)
 
 ChainReactor is a Python-based application designed as a wrapper for small local language models (LLMs). It primarily targets integration with [aider.chat](https://github.com/paul-gauthier/aider) and [OpenWebUI](https://github.com/open-webui/open-webui), providing an iterative processing and response refinement mechanism. The script can run as a command-line tool or as a Flask-based API server that implements a basic OpenAI API.
 
